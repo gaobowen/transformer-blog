@@ -123,15 +123,20 @@ class MultiHeadAttention(nn.Module):
 
 #### PositionwiseFeedForward
 定位前馈网络
-虽然线性变换在不同位置上是相同的，但它们在不同层之间使用不同的参数。另一种描述方法是将其描述为两个核大小为1的卷积。（原文）
+虽然线性变换在不同位置上是相同的，但它们在不同层之间使用不同的参数。另一种描述方法是将其描述为两个核大小为1的卷积。（原文）  
+ 
+扩展阅读：[聊一聊transformer里的FFN](https://zhuanlan.zhihu.com/p/685943779)  
+```
 后续的研究表明是Knowledge Neurons。tokens在前一层attention做global interaction之后，通过FFN的参数中存放着大量training过程中学习到的比较抽象的knowledge来进一步update。目前有些studies是说明这件事的，如   
 《Transformer Feed-Forward Layers Are Key-Value Memories》  
-《Knowledge Neurons in Pretrained Transformers》  
-[聊一聊transformer里的FFN](https://zhuanlan.zhihu.com/p/685943779)  
+《Knowledge Neurons in Pretrained Transformers》 
+```
 
-FFN 是一种混合专家模型？  
+```
 MoEfication: Transformer Feed-forward Layers are Mixtures of Experts  
-这是刘知远团队的论文，其实一直以来，神经网络就存在稀疏激活的现象，也就是在推理的时候，其实只有极小一部分参数参与了计算。这篇论文则通过 MoE 的思想来将 FFN 层拆分成了多个专家，并且新增了一个路由模块来确定推理的时候来挂哪个专家的门诊：）这么做完之后，在提升推理速度的同时，效果依然能保持原来的95%以上。
+FFN 是一种混合专家模型？   
+刘知远团队的论文，其实一直以来，神经网络就存在稀疏激活的现象，也就是在推理的时候，其实只有极小一部分参数参与了计算。这篇论文则通过 MoE 的思想来将 FFN 层拆分成了多个专家，并且新增了一个路由模块来确定推理的时候来挂哪个专家的门诊：）这么做完之后，在提升推理速度的同时，效果依然能保持原来的95%以上。
+```
 
 ```py
 class PositionwiseFeedForward(nn.Module):
@@ -158,15 +163,15 @@ class PositionwiseFeedForward(nn.Module):
 
 
 
-#### 组装整一个Encoder层
+#### 组装一个Encoder Layer
 ```py
 class EncoderLayer(nn.Module):
     ''' Compose with two layers '''
-    # d_model输入特征维度，d_inner 为 PositionwiseFeed 的隐藏层维度
-    def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
+    # d_model输入特征维度，d_hid 为 PositionwiseFeed 的隐藏层维度
+    def __init__(self, d_model, d_hid, n_head, d_k, d_v, dropout=0.1):
         super(EncoderLayer, self).__init__()
         self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.pos_ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
+        self.pos_ffn = PositionwiseFeedForward(d_model, d_hid, dropout=dropout)
 
     def forward(self, x, slf_attn_mask=None):
         y, attn = self.slf_attn(
@@ -175,7 +180,7 @@ class EncoderLayer(nn.Module):
         return y, attn
 ```
 
-#### 组装整一个Decoder层
+#### 组装一个Decoder Layer
 ![](https://pic2.zhimg.com/80/v2-84276332e93b9b0d65170a70cfbc9679_720w.webp)
 ```py
 class DecoderLayer(nn.Module):
@@ -183,22 +188,123 @@ class DecoderLayer(nn.Module):
 
     def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
         super(DecoderLayer, self).__init__()
-        self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.enc_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.self_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.cross_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
         self.pos_ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
 
-    def forward(self, x, encoder_y, slf_attn_mask=None, dec_enc_attn_mask=None):
+    def forward(self, x, encoder_y, slf_attn_mask=None, cross_attn_mask=None):
         # decoder 自注意力
-        decoder_y, decoder_attn = self.slf_attn(x, x, x, mask=slf_attn_mask)
+        decoder_y, decoder_attn = self.self_attn(x, x, x, mask=slf_attn_mask)
         
         # 交叉注意力层
         # 这里的 decoder_y, encoder_y, encoder_y 理解成 Xq Xk Xv
-        # 用 q 去 查询 k-v 里的关联信息
-        decoder_y, dec_enc_attn = self.enc_attn(
-            decoder_y, encoder_y, encoder_y, mask=dec_enc_attn_mask)
+        # 用 decoder 的 q 去 查询 encode 的 k-v 里的关联信息
+        decoder_y, cross_attn = self.cross_attn(
+            decoder_y, encoder_y, encoder_y, mask=cross_attn_mask)
         
         decoder_y = self.pos_ffn(decoder_y)
-        return decoder_y, decoder_attn, dec_enc_attn
+        return decoder_y, decoder_attn, cross_attn
+```
+
+![](https://pic1.zhimg.com/v2-4b53b731a961ee467928619d14a5fd44_r.jpg)
+
+#### 组装整个Encoder模块
+```py
+class Encoder(nn.Module):
+    ''' A encoder model with self attention mechanism. '''
+
+    def __init__(self, n_layers, d_model, n_head, hidden_scaler=4):
+
+        super().__init__()
+
+        assert d_model % n_head == 0
+        # 512 / 8 = 64
+        d_k = d_v = d_model //  n_head
+
+        # 输入前 先标准化
+        self.dropout = nn.Dropout(0.1)
+        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+
+        self.layer_stack = nn.ModuleList([
+            EncoderLayer(d_model, d_model * hidden_scaler, n_head, d_k, d_v)
+            for _ in range(n_layers)])
+        
+
+    def forward(self, src_vecs, src_mask):
+
+        encoder_y = self.layer_norm(self.dropout(src_vecs))
+
+        for enc_layer in self.layer_stack:
+            encoder_y, enc_slf_attn = enc_layer(encoder_y, slf_attn_mask=src_mask)
+
+        return encoder_y,
+```
+
+```py
+class Decoder(nn.Module):
+    ''' A decoder model with self attention mechanism. '''
+
+    def __init__(self, n_layers, d_model, n_head, hidden_scaler=4):
+
+        super().__init__()
+
+        assert d_model % n_head == 0
+        # 512 / 8 = 64
+        d_k = d_v = d_model //  n_head
+
+        self.dropout = nn.Dropout(0.1)
+        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+
+        self.layer_stack = nn.ModuleList([
+            DecoderLayer(d_model, d_model * hidden_scaler, n_head, d_k, d_v)
+            for _ in range(n_layers)])
+
+    def forward(self, target_vecs, encoder_y, src_mask, tgt_mask):
+
+        dec_output = self.layer_norm(self.dropout(target_vecs))
+
+        for dec_layer in self.layer_stack:
+            dec_output, decoder_attn, cross_attn = dec_layer(
+                dec_output, encoder_y, slf_attn_mask=tgt_mask, cross_attn_mask=src_mask)
+
+        return dec_output,
+```
+
+```py
+class Generator(nn.Module):
+    # vocab: tgt_vocab
+    def __init__(self, d_model, vocab):
+        super(Generator, self).__init__()
+        # decode后的结果，先进入一个全连接层变为词典大小的向量
+        self.proj = nn.Linear(d_model, vocab)
+
+    def forward(self, x):
+        # 然后再进行log_softmax操作(在softmax结果上再做多一次log运算)
+        return F.log_softmax(self.proj(x), dim=-1)
+```
+LogSoftmax 函数的输出是一个 K 维向量，其中每个元素的取值范围在负无穷到 0 之间。由于 LogSoftmax 函数在计算交叉熵损失时，会将原始输出先进行对数转换，因此可以避免 Softmax 函数在较小和较大值时出现数值上溢和下溢的情况。
+
+
+```py
+class Transformer(nn.Module):
+    def __init__(self, src_vocab, tgt_vocab, n_layers=6, d_model=512, n_head=8):
+        super(Transformer, self).__init__()
+        self.encoder = Encoder(n_layers, d_model, n_head)
+        self.decoder = Decoder(n_layers, d_model, n_head)
+        self.src_embed_pos = nn.Sequential(InputEmbedding(d_model, src_vocab), PositionalEncoding(d_model))
+        self.tgt_embed_pos = nn.Sequential(InputEmbedding(d_model, tgt_vocab), PositionalEncoding(d_model))
+        self.generator = Generator(d_model, tgt_vocab)
+
+    def encode(self, src, src_mask):
+        return self.encoder(self.src_embed_pos(src), src_mask)
+
+    def decode(self, encoder_y, src_mask, tgt, tgt_mask):
+        return self.decoder(self.tgt_embed_pos(tgt), encoder_y, src_mask, tgt_mask)
+
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        # encoder的结果作为decoder的memory参数传入，进行decode
+        encoder_y = self.encode(src, src_mask)
+        return self.decode(encoder_y, src_mask, tgt, tgt_mask)
 ```
 
 
