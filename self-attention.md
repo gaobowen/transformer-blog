@@ -1,22 +1,22 @@
 ## Self-Attention
 ![](https://pic3.zhimg.com/80/v2-7c005cd0447c6aaad2bd531b0bd21456_720w.webp)
-Self-Attention 是 Transformer中最核心的部分。
+Self-Attention 是 Transformer中最核心的部分。  
 
 $Attention(Q,K,V)=softmax(\dfrac{QK^T}{\sqrt{d_k}})V$
 
-这种的形式的公式其意义到底是什么？先看$QK^T$:  
+这种的形式的公式其意义到底是什么？先看 $QK^T$ :  
 
 $a \cdot b =a^Tb =\sum_{i=1}^{n} a_i b_i =||a||\;||b||\;cos\theta$  
 ![](https://upload.wikimedia.org/wikipedia/commons/7/72/Scalarproduct.gif)
 
 向量的内积，表征一个向量在另一个向量上的投影。投影的值大，说明两个向量相关度高。如果两个向量夹角是九十度，那么这两个向量线性无关。
 
-上述的$a$和$b$均为列向量，而公式里的$Q$ $K$是行向量（batch * len * d_k ）所以点积写成 $QK^T$。
+上述的$a$和$b$均为列向量，而公式里的 $Q$ $K$ 是行向量（batch * len * d_k ）所以点积写成 $QK^T$ 。
 
 ![alt text](image.png)  
 Q K 的内积 表示了 Q中每个单词 与 K的每个单词 的关联度矩阵（注意力评分），softmax进行归一化处理使得整体的关联度之和为1
 
-进行softmax之前需要对attention进行scaled（为什么要除以$\sqrt{d_k}$）?  
+进行softmax之前需要对attention进行scaled（why divide by $\sqrt{d_k}$ ）?  
 the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients  
 当d_k较大时，点积的幅度也就变大，容易进入softmax函数的梯度消失区域。
 
@@ -110,7 +110,7 @@ class MultiHeadAttention(nn.Module):
 
         # Transpose to move the head dimension back: b x lq x n x dv
         # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
-        # 把维度 batch x head x len x d_k 还原成 batch x len x d_model, 方便残差
+        # 把维度 batch x head x len x d_k 还原成 batch x len x d_model, 方便做残差
         q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
         q = self.dropout(self.fc(q))
         q += residual
@@ -289,10 +289,13 @@ LogSoftmax 函数的输出是一个 K 维向量，其中每个元素的取值范
 class Transformer(nn.Module):
     def __init__(self, src_vocab, tgt_vocab, n_layers=6, d_model=512, n_head=8):
         super(Transformer, self).__init__()
-        self.encoder = Encoder(n_layers, d_model, n_head)
-        self.decoder = Decoder(n_layers, d_model, n_head)
+
         self.src_embed_pos = nn.Sequential(InputEmbedding(d_model, src_vocab), PositionalEncoding(d_model))
         self.tgt_embed_pos = nn.Sequential(InputEmbedding(d_model, tgt_vocab), PositionalEncoding(d_model))
+
+        self.encoder = Encoder(n_layers, d_model, n_head)
+        self.decoder = Decoder(n_layers, d_model, n_head)
+
         self.generator = Generator(d_model, tgt_vocab)
 
     def encode(self, src, src_mask):
@@ -302,12 +305,18 @@ class Transformer(nn.Module):
         return self.decoder(self.tgt_embed_pos(tgt), encoder_y, src_mask, tgt_mask)
 
     def forward(self, src, tgt, src_mask, tgt_mask):
-        # encoder的结果作为decoder的memory参数传入，进行decode
+        # encoder的结果作为decoder的 k-v 参数传入，进行decode
         encoder_y = self.encode(src, src_mask)
         return self.decode(encoder_y, src_mask, tgt, tgt_mask)
 ```
 
 
-https://github.com/jadore801120/attention-is-all-you-need-pytorch
 
+
+
+
+
+
+https://github.com/jadore801120/attention-is-all-you-need-pytorch
 https://jalammar.github.io/illustrated-transformer/
+https://github.com/hemingkx/ChineseNMT

@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 import math
 from torch.autograd import Variable
-
+import torch.nn.functional as F
+import torch.nn as nn
 
 DEVICE = torch.device('cpu')
 
@@ -76,4 +77,8 @@ class PositionalEncoding(nn.Module):
     # 设 x 的句子长度为len，尺寸为 batch×len×d_model, 这里x.size(1)即为句子长度len，则 self.pe[:, :x.size(1)]尺寸为 1×len×d_model
     x = x + Variable(self.pe[:, :x.size(1)], requires_grad=False)
     return x
+
+
+
+
 
