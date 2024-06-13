@@ -149,15 +149,11 @@ class PositionwiseFeedForward(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-
         residual = x
-
         x = self.w_2(F.relu(self.w_1(x)))
         x = self.dropout(x)
         x += residual
-
         x = self.layer_norm(x)
-
         return x
 ```
 
@@ -284,7 +280,7 @@ class Generator(nn.Module):
 ```
 LogSoftmax 函数的输出是一个 K 维向量，其中每个元素的取值范围在负无穷到 0 之间。由于 LogSoftmax 函数在计算交叉熵损失时，会将原始输出先进行对数转换，因此可以避免 Softmax 函数在较小和较大值时出现数值上溢和下溢的情况。
 
-
+![](https://pic1.zhimg.com/v2-4b53b731a961ee467928619d14a5fd44_r.jpg)
 ```py
 class Transformer(nn.Module):
     def __init__(self, src_vocab, tgt_vocab, n_layers=6, d_model=512, n_head=8):
@@ -309,6 +305,7 @@ class Transformer(nn.Module):
         encoder_y = self.encode(src, src_mask)
         return self.decode(encoder_y, src_mask, tgt, tgt_mask)
 ```
+
 
 
 
