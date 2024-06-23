@@ -1,5 +1,6 @@
 .ipynb_checkpoints
 *.pt
 *.pth
-*_tokenizer.*
+en_tokenizer.*
+zh_tokenizer.*
 *.txt
