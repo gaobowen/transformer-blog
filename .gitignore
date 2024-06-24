@@ -1,5 +1,6 @@
 .ipynb_checkpoints
-.ipynb_checkpoints/*
+.ipynb_checkpoints/transformer-checkpoint.ipynb
+.ipynb_checkpoints/Untitled-checkpoint.ipynb
 *.pt
 *.pth
 en_tokenizer.*
