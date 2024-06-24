@@ -13,7 +13,7 @@ $a \cdot b =a^Tb =\sum_{i=1}^{n} a_i b_i =||a||\;||b||\;cos\theta$
 
 上述的$a$和$b$均为列向量，而公式里的 $Q$ $K$ 是行向量（batch * len * d_k ）所以点积写成 $QK^T$ 。
 
-![alt text](image.png)  
+<!-- ![alt text](image.png)   -->
 Q K 的内积 表示了 Q中每个单词 与 K的每个单词 的关联度矩阵（注意力评分），softmax进行归一化处理使得整体的关联度之和为1
 
 进行softmax之前需要对attention进行scaled（why divide by $\sqrt{d_k}$ ）?  
@@ -78,7 +78,7 @@ class MultiHeadAttention(nn.Module):
         self.attention = ScaledDotProductAttention()
 
         self.dropout = nn.Dropout(dropout)
-        # 最后的维度size 进行标准化，趋近于标准正太分布 
+        # 最后的维度size 进行标准化，趋近于标准高斯分布 
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
 
@@ -127,7 +127,7 @@ class MultiHeadAttention(nn.Module):
  
 扩展阅读：[聊一聊transformer里的FFN](https://zhuanlan.zhihu.com/p/685943779)  
 ```
-后续的研究表明是Knowledge Neurons。tokens在前一层attention做global interaction之后，通过FFN的参数中存放着大量training过程中学习到的比较抽象的knowledge来进一步update。目前有些studies是说明这件事的，如   
+后续的研究表明是Knowledge Neurons知识神经元。tokens在前一层attention做全局交互操作之后，通过FFN的参数中存放着大量training过程中学习到的比较抽象的Knowledge，每次都会进一步更新这些Knowledge。目前有些studies是说明这件事的，如   
 《Transformer Feed-Forward Layers Are Key-Value Memories》  
 《Knowledge Neurons in Pretrained Transformers》 
 ```
@@ -162,17 +162,16 @@ class PositionwiseFeedForward(nn.Module):
 #### 组装一个Encoder Layer
 ```py
 class EncoderLayer(nn.Module):
-    ''' Compose with two layers '''
     # d_model输入特征维度，d_hid 为 PositionwiseFeed 的隐藏层维度
     def __init__(self, d_model, d_hid, n_head, d_k, d_v, dropout=0.1):
         super(EncoderLayer, self).__init__()
-        self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.pos_ffn = PositionwiseFeedForward(d_model, d_hid, dropout=dropout)
+        self.self_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.ffn = PositionwiseFeedForward(d_model, d_hid, dropout=dropout)
 
-    def forward(self, x, slf_attn_mask=None):
-        y, attn = self.slf_attn(
-            x, x, x, mask=slf_attn_mask)
-        y = self.pos_ffn(y)
+    def forward(self, x, src_mask=None):
+        y, attn = self.self_attn(
+            x, x, x, mask=src_mask)
+        y = self.ffn(y)
         return y, attn
 ```
 
@@ -180,25 +179,25 @@ class EncoderLayer(nn.Module):
 ![](https://pic2.zhimg.com/80/v2-84276332e93b9b0d65170a70cfbc9679_720w.webp)
 ```py
 class DecoderLayer(nn.Module):
-    ''' Compose with three layers '''
-
     def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
         super(DecoderLayer, self).__init__()
         self.self_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
         self.cross_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.pos_ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
+        self.ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
 
-    def forward(self, x, encoder_y, slf_attn_mask=None, cross_attn_mask=None):
+    def forward(self, x, encoder_y, tgt_mask=None, cross_attn_mask=None):
         # decoder 自注意力
-        decoder_y, decoder_attn = self.self_attn(x, x, x, mask=slf_attn_mask)
+        decoder_y, decoder_attn = self.self_attn(x, x, x, mask=tgt_mask)
+
+        knowledge = encoder_y
         
         # 交叉注意力层
         # 这里的 decoder_y, encoder_y, encoder_y 理解成 Xq Xk Xv
         # 用 decoder 的 q 去 查询 encode 的 k-v 里的关联信息
         decoder_y, cross_attn = self.cross_attn(
-            decoder_y, encoder_y, encoder_y, mask=cross_attn_mask)
+            decoder_y, knowledge, knowledge, mask=cross_attn_mask)
         
-        decoder_y = self.pos_ffn(decoder_y)
+        decoder_y = self.ffn(decoder_y)
         return decoder_y, decoder_attn, cross_attn
 ```
 
@@ -207,10 +206,7 @@ class DecoderLayer(nn.Module):
 #### 组装整个Encoder模块
 ```py
 class Encoder(nn.Module):
-    ''' A encoder model with self attention mechanism. '''
-
     def __init__(self, n_layers, d_model, n_head, hidden_scaler=4):
-
         super().__init__()
 
         assert d_model % n_head == 0
@@ -233,15 +229,12 @@ class Encoder(nn.Module):
         for enc_layer in self.layer_stack:
             encoder_y, enc_slf_attn = enc_layer(encoder_y, slf_attn_mask=src_mask)
 
-        return encoder_y,
+        return encoder_y
 ```
 
 ```py
 class Decoder(nn.Module):
-    ''' A decoder model with self attention mechanism. '''
-
     def __init__(self, n_layers, d_model, n_head, hidden_scaler=4):
-
         super().__init__()
 
         assert d_model % n_head == 0
@@ -255,15 +248,15 @@ class Decoder(nn.Module):
             DecoderLayer(d_model, d_model * hidden_scaler, n_head, d_k, d_v)
             for _ in range(n_layers)])
 
-    def forward(self, target_vecs, encoder_y, src_mask, tgt_mask):
+    def forward(self, tgt_vecs, encoder_y, src_mask, tgt_mask):
 
-        dec_output = self.layer_norm(self.dropout(target_vecs))
+        dec_output = self.layer_norm(self.dropout(tgt_vecs))
 
         for dec_layer in self.layer_stack:
             dec_output, decoder_attn, cross_attn = dec_layer(
-                dec_output, encoder_y, slf_attn_mask=tgt_mask, cross_attn_mask=src_mask)
+                dec_output, encoder_y, tgt_mask=tgt_mask, cross_attn_mask=src_mask)
 
-        return dec_output,
+        return dec_output
 ```
 
 ```py
@@ -305,6 +298,25 @@ class Transformer(nn.Module):
         encoder_y = self.encode(src, src_mask)
         return self.decode(encoder_y, src_mask, tgt, tgt_mask)
 ```
+
+## Mask操作
+
+```py
+def get_pad_mask(seq, pad_idx):
+    # 对 PAD 做屏蔽操作
+    # batch * seqlen -> batch * 1 * seqlen
+    return (seq != pad_idx).unsqueeze(-2)
+
+
+def get_subsequent_mask(seq):
+    # decode 是 一个单词 一个单词 进行推理，不能让后面单词的注意力影响到前面的单词
+    sz_b, len_s = seq.size()
+    subsequent_mask = (1 - torch.triu(
+        torch.ones((1, len_s, len_s), device=seq.device), diagonal=1)).bool()
+    return subsequent_mask
+```
+
+目标的mask比较特殊，在排除PAD干扰时，还要排除句子后面单词对前面单词的影响
 
 
 
